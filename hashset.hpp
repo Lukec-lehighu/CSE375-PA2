@@ -8,8 +8,8 @@
 
 #include <iostream>
 
-#define K 100      // size of the tables
-#define N 500       // random number of elements to initially populate the array with
+#define K 1000      // size of the tables
+#define N 100       // random number of elements to initially populate the array with
 #define LIMIT 15
 
 // for concurrent hash sets specifically
@@ -103,9 +103,11 @@ public:
     }
 
     bool contains(T &item) {
-        // TODO: optimize this by only running hash once per table
-        return (table0[this->hash0(item, table0.size())] != nullptr && *table0[this->hash0(item, table0.size())] == item)
-            || (table1[this->hash1(item, table1.size())] != nullptr && *table1[this->hash1(item, table1.size())] == item);
+        size_t h0 = this->hash0(item, table0.size());
+        size_t h1 = this->hash1(item, table1.size());
+
+        return (table0[h0] != nullptr && *table0[h0] == item)
+            || (table1[h1] != nullptr && *table1[h1] == item);
     }
 
     // non-thread safe
@@ -321,13 +323,100 @@ public:
     }
 };
 
-// template<typename T>
-// class TransactionalMemoryHashSet : public HashSet<T> {
-// public:
-//     bool add(T item);
-//     bool remove(T item);
-//     bool contains(T &item);
-// };
+template<typename T>
+class TransactionalMemoryHashSet : public HashSet<T> {
+private:
+    std::vector<std::shared_ptr<T>> table0;
+    std::vector<std::shared_ptr<T>> table1;
+
+    void resize() {
+        auto oldTable0 = table0;
+        auto oldTable1 = table1;
+
+        table0 = std::vector<std::shared_ptr<T>>(table0.size() * 2, nullptr);
+        table1 = std::vector<std::shared_ptr<T>>(table1.size() * 2, nullptr);
+
+        for(auto &i : oldTable0) {
+            if (i != nullptr)
+                add(*i);
+        }
+        for(auto &i : oldTable1) {
+            if (i != nullptr)
+                add(*i);
+        }
+    }
+public:
+    TransactionalMemoryHashSet() : table0(std::vector<std::shared_ptr<T>>(K, nullptr)), 
+                                    table1(std::vector<std::shared_ptr<T>>(K, nullptr))
+    {}
+
+    bool add(T item) {
+        if(contains(item))
+            return false;
+
+        auto tmp = std::make_shared<T>(item);
+        for(int i=0; i<LIMIT; i++) {
+            __transaction_atomic { std::swap(table0[this->hash0(item, table0.size())], tmp); }
+            if(tmp == nullptr)
+                return true;
+
+            __transaction_atomic { std::swap(table1[this->hash1(item, table1.size())], tmp); }
+            if(tmp == nullptr)
+                return true;
+        }
+
+        __transaction_atomic { resize(); }
+        return add(item);
+    }
+
+    bool remove(T item) {
+        size_t hashVal;
+        __transaction_atomic {
+            hashVal = this->hash0(item, table0.size());
+            if(table0[hashVal] != nullptr && *table0[hashVal] == item) {
+                table0[hashVal] = nullptr;
+                return true;
+            }
+        }
+
+        __transaction_atomic {
+            hashVal = this->hash1(item, table1.size());
+            if(table1[hashVal] != nullptr && *table1[hashVal] == item) {
+                table1[hashVal] = nullptr;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool contains(T &item) {
+        size_t h0 = this->hash0(item, table0.size());
+        size_t h1 = this->hash1(item, table1.size());
+        bool res = false;
+
+        __transaction_atomic {
+            res = (table0[h0] != nullptr && *table0[h0] == item)
+                || (table1[h1] != nullptr && *table1[h1] == item);
+        }
+
+        return res;
+    }
+
+    // non-thread safe
+    size_t size() {
+        size_t count = 0;
+        for(auto &i : table0) {
+            if(i != nullptr)
+                count++;
+        }
+        for(auto &i : table1) {
+            if(i != nullptr)
+                count++;
+        }
+        return count;
+    }
+};
 
 // Only have an integer implementation of this function
 template<>
