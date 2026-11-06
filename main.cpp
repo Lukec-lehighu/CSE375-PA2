@@ -5,6 +5,6 @@
 using namespace std;
 
 int main() {
-    SequentialHashSet<int> test;
+    PhasedCuckooHashSet<int> test;
     return 0;
 }

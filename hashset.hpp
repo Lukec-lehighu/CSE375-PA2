@@ -125,38 +125,148 @@ public:
 template<typename T>
 class PhasedCuckooHashSet : public HashSet<T> {
 private:
-    std::vector<std::vector<std::shared_ptr<T>>> table0;
-    std::vector<std::vector<std::shared_ptr<T>>> table1;
+    std::vector<std::vector<T>> table0;
+    std::vector<std::vector<T>> table1;
     std::vector<std::mutex> lock0;
     std::vector<std::mutex> lock1;
+
+    // helper method
+    bool removeFrom(std::vector<T> &set, T item) {
+        for(size_t i=0; i<set.size(); i++) {
+            // if the set contains the item...
+            if(set[i]==item) {
+                // remove it
+                set.erase(set.begin()+i);
+                return true;
+            }
+        }
+        return false;
+    }
 
     void acquire(T &x) {
         lock0[this->hash0(x, lock0.size()) % lock0.size()].lock();
         lock1[this->hash1(x, lock1.size()) % lock1.size()].lock();
     }
     void release(T &x) {
-        lock0[this->hash0(x) % lock0.size()].unlock();
-        lock1[this->hash1(x) % lock1.size()].unlock();
+        lock0[this->hash0(x, lock0.size()) % lock0.size()].unlock();
+        lock1[this->hash1(x, lock1.size()) % lock1.size()].unlock();
     }
 
     void resize() {
+        size_t oldCapacity = table0.size();
+        for(auto &lock : lock0)
+            lock.lock();
 
+        
+    }
+
+    bool relocate(int i, size_t hi) {
+        // copied directly from the book, with C++ translation
+        int hj = 0;
+        int j = 1-i;
+
+        for(int round = 0; round < LIMIT; round++) {
+            std::vector<T>* iSet = &(i==0?table0:table1)[hi];
+            T y = iSet->at(0);
+            switch(i) {
+                case 0: hj = this->hash1(y, table1.size()); break;
+                case 1: hj = this->hash0(y, table0.size()); break;
+            }
+            acquire(y);
+            std::vector<T>* jSet = &(j==0?table0:table1)[hj];
+            if(removeFrom(*jSet, y)) {
+                if(jSet->size() < THRESHOLD) {
+                    jSet->push_back(y);
+                    release(y);
+                    return true;
+                } else if(jSet->size() < PROBE_SIZE) {
+                    jSet->push_back(y);
+                    i = 1-i;
+                    hi = hj;
+                    j = 1-j;
+                } else {
+                    iSet->push_back(y);
+                    release(y);
+                    return false;
+                }
+            } else if(iSet->size() >= THRESHOLD) {
+                release(y);
+                continue;
+            } else {
+                release(y);
+                return true;
+            }
+
+            release(y);
+        }
+
+        return false;
     }
 public:
     PhasedCuckooHashSet() : lock0(std::vector<std::mutex>(K)), lock1(std::vector<std::mutex>(K)) {
         for(size_t i=0; i<K; i++) {
-            table0.push_back(std::vector<std::shared_ptr<T>>(PROBE_SIZE, nullptr));
-            table1.push_back(std::vector<std::shared_ptr<T>>(PROBE_SIZE, nullptr));
+            table0.push_back(std::vector<T>());
+            table1.push_back(std::vector<T>());
         }
     }
 
     bool add(T item) {
         acquire(item);
+        if(contains(item)) return false;
 
-        return false;
+        size_t h0 = this->hash0(item, table0.size());
+        size_t h1 = this->hash1(item, table1.size());
+        size_t h = 0;
+        int i = 0;
+
+        bool mustResize = false;
+        if(table0[h0].size() < THRESHOLD) {
+            table0[h0].push_back(item);
+            release(item);
+            return true;
+        } else if(table1[h1].size() < THRESHOLD) {
+            table1[h1].push_back(item);
+            release(item);
+            return true;
+        } else if (table0[h0].size() < PROBE_SIZE) {
+            table0[h0].push_back(item);
+            i = 0;
+            h = h0;
+        } else if (table1[h1].size() < PROBE_SIZE) {
+            table1[h1].push_back(item);
+            i = 1;
+            h = h1;
+        } else {
+            mustResize = true;
+        }
+
+        release(item);
+
+        if(mustResize) {
+            resize(); add(item);
+        } else if(!relocate(i, h)) {
+            resize();
+        }
+
+        return true;
     }
 
     bool remove(T item) {
+        acquire(item);
+
+        size_t h0 = this->hash0(item, table0.size());
+        if(removeFrom(table0[h0], item)) {
+            release(item);
+            return true;
+        }
+
+        size_t h1 = this->hash1(item, table0.size());
+        if(removeFrom(table1[h1], item)) {
+            release(item);
+            return true;
+        }
+
+        release(item);
         return false;
     }
 
