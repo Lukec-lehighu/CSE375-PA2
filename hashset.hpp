@@ -15,6 +15,7 @@
 #define PROBE_SIZE 4
 #define THRESHOLD 2
 
+// parant class to make bench testing easier later on
 template<typename T>
 class HashSet {
 public:
@@ -80,7 +81,6 @@ public:
                 return true;
         }
 
-        std::cout << "REsizeing" << std::endl;
         resize();
         return add(item);
     }
@@ -157,7 +157,28 @@ private:
         for(auto &lock : lock0)
             lock.lock();
 
-        
+        if(oldCapacity == lock0.size()) return;
+
+        auto oldTable0 = table0;
+        auto oldTable1 = table1;
+
+        size_t capacity = 2 * oldCapacity;
+        table0 = std::vector<std::vector<T>>(capacity);
+        table1 = std::vector<std::vector<T>>(capacity);
+
+        for(auto &row : oldTable0) {
+            for(auto &z : row) {
+                add(z);
+            }
+        }
+        for(auto &row : oldTable1) {
+            for(auto &z : row) {
+                add(z);
+            }
+        }
+
+        for(auto &lock : lock0)
+            lock.unlock();
     }
 
     bool relocate(int i, size_t hi) {
