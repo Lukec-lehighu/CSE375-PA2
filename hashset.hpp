@@ -158,7 +158,7 @@ private:
         for(auto &lock : lock0)
             lock.lock();
 
-        if(oldCapacity == lock0.size()) return;
+        if(oldCapacity != table0.size()) return;
 
         auto oldTable0 = table0;
         auto oldTable1 = table1;
