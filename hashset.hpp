@@ -4,11 +4,12 @@
 #include <vector>
 #include <memory>
 #include <mutex>
+#include <algorithm>
 
 #include <iostream>
 
-#define K 5000      // size of the tables
-#define N 100       // random number of elements to initially populate the array with
+#define K 100      // size of the tables
+#define N 500       // random number of elements to initially populate the array with
 #define LIMIT 15
 
 // for concurrent hash sets specifically
@@ -292,11 +293,31 @@ public:
     }
 
     bool contains(T &item) {
+        acquire(item);
+
+        auto set0 = table0[this->hash0(item, table0.size())];
+        if(std::find(set0.begin(), set0.end(), item) != set0.end()) {
+            release(item);
+            return true;
+        }
+
+        auto set1 = table1[this->hash1(item, table1.size())];
+        if(std::find(set1.begin(), set1.end(), item) != set1.end()) {
+            release(item);
+            return true;
+        }
+
+        release(item);
         return false;
     }
 
     size_t size() {
-        return 0;
+        size_t count = 0;
+        for(auto &row : table0)
+            count += row.size();
+        for(auto &row : table1)
+            count += row.size();
+        return count;
     }
 };
 
