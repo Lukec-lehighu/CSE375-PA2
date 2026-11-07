@@ -147,12 +147,12 @@ private:
     }
 
     void acquire(T &x) {
-        lock0[this->hash0(x, lock0.size()) % lock0.size()].lock();
-        lock1[this->hash1(x, lock1.size()) % lock1.size()].lock();
+        lock0[this->hash0(x, lock0.size())].lock();
+        lock1[this->hash1(x, lock1.size())].lock();
     }
     void release(T &x) {
-        lock0[this->hash0(x, lock0.size()) % lock0.size()].unlock();
-        lock1[this->hash1(x, lock1.size()) % lock1.size()].unlock();
+        lock0[this->hash0(x, lock0.size())].unlock();
+        lock1[this->hash1(x, lock1.size())].unlock();
     }
 
     void resize() {
@@ -328,27 +328,52 @@ class TransactionalMemoryHashSet : public HashSet<T> {
 private:
     std::vector<std::shared_ptr<T>> table0;
     std::vector<std::shared_ptr<T>> table1;
+    size_t capacity;
 
     void resize() {
-        auto oldTable0 = table0;
-        auto oldTable1 = table1;
+        size_t oldSize = 0;
+        __transaction_atomic {
+            oldSize = capacity;
+        }
 
-        table0 = std::vector<std::shared_ptr<T>>(table0.size() * 2, nullptr);
-        table1 = std::vector<std::shared_ptr<T>>(table1.size() * 2, nullptr);
+        auto old0 = table0;
+        auto old1 = table1;
+        table0.resize(oldSize*2);
+        table1.resize(oldSize*2);
 
-        for(auto &i : oldTable0) {
-            if (i != nullptr)
+        std::vector<std::shared_ptr<T>> garbage0(oldSize, nullptr);
+        std::vector<std::shared_ptr<T>> garbage1(oldSize, nullptr);
+        
+        __transaction_atomic {
+            if(table0.size() != oldSize) return; // another thread already resized, ignore and move on
+
+            for(size_t i=0; i<oldSize; i++) {
+                // reset tables for rehashing
+                // swap to garbage vectors so smart pointers don't try to deallocate within the transaction block
+                // garbage pointers will be deallocated once function exits (transaction completes)
+                std::swap(table0[i], garbage0[1]);
+                std::swap(table1[i], garbage1[1]);
+            }
+
+            // update capacity, show other threads that the size was in fact successfully updated
+            capacity = 2*oldSize;
+        }
+
+        for(auto &i : old0) {
+            if(i != nullptr)
                 add(*i);
         }
-        for(auto &i : oldTable1) {
-            if (i != nullptr)
+        for(auto &i : old1) {
+            if(i != nullptr)
                 add(*i);
         }
     }
 public:
     TransactionalMemoryHashSet() : table0(std::vector<std::shared_ptr<T>>(K, nullptr)), 
                                     table1(std::vector<std::shared_ptr<T>>(K, nullptr))
-    {}
+    {
+        capacity = K;
+    }
 
     bool add(T item) {
         if(contains(item))
@@ -356,33 +381,42 @@ public:
 
         auto tmp = std::make_shared<T>(item);
         for(int i=0; i<LIMIT; i++) {
-            __transaction_atomic { std::swap(table0[this->hash0(item, table0.size())], tmp); }
+            __transaction_atomic { std::swap(table0[this->hash0(item, capacity)], tmp); }
             if(tmp == nullptr)
                 return true;
 
-            __transaction_atomic { std::swap(table1[this->hash1(item, table1.size())], tmp); }
+            __transaction_atomic { std::swap(table1[this->hash1(item, capacity)], tmp); }
             if(tmp == nullptr)
                 return true;
         }
 
-        __transaction_atomic { resize(); }
+        resize();
         return add(item);
     }
 
     bool remove(T item) {
-        size_t hashVal;
+        size_t arrSize;
         __transaction_atomic {
-            hashVal = this->hash0(item, table0.size());
-            if(table0[hashVal] != nullptr && *table0[hashVal] == item) {
-                table0[hashVal] = nullptr;
-                return true;
-            }
+            arrSize = capacity;
         }
 
+        std::vector<std::shared_ptr<T>> garbage0(arrSize, nullptr);
+        std::vector<std::shared_ptr<T>> garbage1(arrSize, nullptr);
+
+        size_t hashVal;
+        
         __transaction_atomic {
-            hashVal = this->hash1(item, table1.size());
+            if(capacity != arrSize) return false;
+
+            hashVal = this->hash0(item, capacity);
+            if(table0[hashVal] != nullptr && *table0[hashVal] == item) {
+                std::swap(table0[hashVal], garbage0[hashVal]);
+                return true;
+            }
+
+            hashVal = this->hash1(item, capacity);
             if(table1[hashVal] != nullptr && *table1[hashVal] == item) {
-                table1[hashVal] = nullptr;
+                std::swap(table1[hashVal], garbage1[hashVal]);
                 return true;
             }
         }
@@ -391,8 +425,8 @@ public:
     }
 
     bool contains(T &item) {
-        size_t h0 = this->hash0(item, table0.size());
-        size_t h1 = this->hash1(item, table1.size());
+        size_t h0 = this->hash0(item, capacity);
+        size_t h1 = this->hash1(item, capacity);
         bool res = false;
 
         __transaction_atomic {
