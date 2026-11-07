@@ -86,7 +86,7 @@ int main() {
     cout << "Sequential time: " << timeExecution([&]{ TestSequential(seqHashSet); }) << " μs" << endl;
 
     for(int i=1; i<=16; i++) {
-        cout << "Phased Cuckoo time (" << i << " threads): " << timeExecution([&]{ TestMultiThreaded(castedPhase, i); }) << " μs" << endl;
+        //cout << "Phased Cuckoo time (" << i << " threads): " << timeExecution([&]{ TestMultiThreaded(castedPhase, i); }) << " μs" << endl;
         cout << "Transactional time: (" << i << " threads): " << timeExecution([&]{ TestMultiThreaded(castedTransactional, i); }) << " μs" << endl;
     }
 

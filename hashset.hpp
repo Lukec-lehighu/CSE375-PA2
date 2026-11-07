@@ -409,16 +409,28 @@ public:
             return false;
 
         auto tmp = std::make_shared<T>(item);
-        for(int i=0; i<LIMIT; i++) {
-            std::shared_lock lk(resizeMu);
-            __transaction_atomic { std::swap(table0[this->hash0(item, capacity)], tmp); }
-            if(tmp == nullptr)
-                return true;
+        bool success = false;
+        
+        resizeMu.lock_shared();
+        __transaction_atomic {
+            for(int i=0; i<LIMIT; i++) {
+                std::swap(table0[this->hash0(item, capacity)], tmp);
+                if(tmp == nullptr) {
+                    success = true;
+                    break;
+                }
 
-            __transaction_atomic { std::swap(table1[this->hash1(item, capacity)], tmp); }
-            if(tmp == nullptr)
-                return true;
+                std::swap(table1[this->hash1(item, capacity)], tmp);
+                if(tmp == nullptr) {
+                    success = true;
+                    break;
+                }
+            }
         }
+        resizeMu.unlock_shared();
+
+        if (success)
+            return true;
 
         resize();
         return add(item);
