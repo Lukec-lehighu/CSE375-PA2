@@ -6,7 +6,7 @@
 
 #include "hashset.hpp"
 
-#define NUM_OPS 10000000
+#define NUM_OPS 1000000
 
 #define CONTAINS_PERCENT 80
 #define INSERT_PERCENT 10
@@ -18,7 +18,7 @@ int64_t timeExecution(function<void()> func) {
     chrono::steady_clock::time_point begin = chrono::steady_clock::now();
     func();
     chrono::steady_clock::time_point end = chrono::steady_clock::now();
-    return chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
+    return chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
 }
 
 // a thread safe rng
@@ -83,9 +83,12 @@ int main() {
     HashSet<int>* castedPhase = static_cast<HashSet<int>*>(&phasedHashSet);
     HashSet<int>* castedTransactional = static_cast<HashSet<int>*>(&transactionalHashSet);
 
-    // cout << "Sequential time: " << timeExecution([&]{ TestSequential(seqHashSet); }) << " ms" << endl;
-    cout << "Phased Cuckoo time: " << timeExecution([&]{ TestMultiThreaded(castedPhase, 8); }) << " ms" << endl;
-    // cout << "Transactional time: " << timeExecution([&]{ TestMultiThreaded(castedTransactional, 8); }) << " ms" << endl;
+    cout << "Sequential time: " << timeExecution([&]{ TestSequential(seqHashSet); }) << " μs" << endl;
+
+    for(int i=1; i<=16; i++) {
+        cout << "Phased Cuckoo time (" << i << " threads): " << timeExecution([&]{ TestMultiThreaded(castedPhase, i); }) << " μs" << endl;
+        cout << "Transactional time: (" << i << " threads): " << timeExecution([&]{ TestMultiThreaded(castedTransactional, i); }) << " μs" << endl;
+    }
 
     return 0;
 }

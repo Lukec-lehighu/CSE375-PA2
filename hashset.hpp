@@ -351,6 +351,9 @@ private:
     std::vector<std::shared_ptr<T>> table0;
     std::vector<std::shared_ptr<T>> table1;
     size_t capacity;
+    
+    // for resizing the vector
+    std::shared_mutex resizeMu;
 
     void resize() {
         size_t oldSize = 0;
@@ -358,10 +361,14 @@ private:
             oldSize = capacity;
         }
 
+        // reallocate atomically
+        resizeMu.lock();
         auto old0 = table0;
         auto old1 = table1;
+
         table0.resize(oldSize*2);
         table1.resize(oldSize*2);
+        resizeMu.unlock();
 
         std::vector<std::shared_ptr<T>> garbage0(oldSize, nullptr);
         std::vector<std::shared_ptr<T>> garbage1(oldSize, nullptr);
@@ -373,8 +380,8 @@ private:
                 // reset tables for rehashing
                 // swap to garbage vectors so smart pointers don't try to deallocate within the transaction block
                 // garbage pointers will be deallocated once function exits (transaction completes)
-                std::swap(table0[i], garbage0[1]);
-                std::swap(table1[i], garbage1[1]);
+                std::swap(table0[i], garbage0[i]);
+                std::swap(table1[i], garbage1[i]);
             }
 
             // update capacity, show other threads that the size was in fact successfully updated
@@ -403,6 +410,7 @@ public:
 
         auto tmp = std::make_shared<T>(item);
         for(int i=0; i<LIMIT; i++) {
+            std::shared_lock lk(resizeMu);
             __transaction_atomic { std::swap(table0[this->hash0(item, capacity)], tmp); }
             if(tmp == nullptr)
                 return true;
@@ -427,6 +435,7 @@ public:
 
         size_t hashVal;
         
+        std::shared_lock lk(resizeMu);
         __transaction_atomic {
             if(capacity != arrSize) return false;
 
@@ -447,11 +456,13 @@ public:
     }
 
     bool contains(T &item) {
-        size_t h0 = this->hash0(item, capacity);
-        size_t h1 = this->hash1(item, capacity);
         bool res = false;
 
+        std::shared_lock lk(resizeMu);
         __transaction_atomic {
+            size_t h0 = this->hash0(item, capacity);
+            size_t h1 = this->hash1(item, capacity);
+
             res = (table0[h0] != nullptr && *table0[h0] == item)
                 || (table1[h1] != nullptr && *table1[h1] == item);
         }
