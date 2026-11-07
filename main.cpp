@@ -38,15 +38,15 @@ void TestMultiThreaded(HashSet<int>* set, int numThreads) {
                     int op = safeRand() % 100;
                     if(op < CONTAINS_PERCENT) {
                         auto tmp = safeRand();
-                        cout << "contains" << endl;
+                        // cout << "contains" << endl;
                         set->contains(tmp);
                     }
                     else if(op < CONTAINS_PERCENT + INSERT_PERCENT) {
-                        //cout << "insert" << endl;
+                        // cout << "insert" << endl;
                         set->add(safeRand());
                     }
                     else if(op < CONTAINS_PERCENT + INSERT_PERCENT + REMOVE_PERCENT) {
-                        cout << "remove" << endl;
+                        // cout << "remove" << endl;
                         set->remove(safeRand());
                     }
                 }
@@ -84,7 +84,7 @@ int main() {
     HashSet<int>* castedTransactional = static_cast<HashSet<int>*>(&transactionalHashSet);
 
     //cout << "Sequential time: " << timeExecution([&]{ TestSequential(seqHashSet); }) << " ms" << endl;
-    cout << "Phased Cuckoo time: " << timeExecution([&]{ TestMultiThreaded(castedPhase, 1); }) << " ms" << endl;
+    // cout << "Phased Cuckoo time: " << timeExecution([&]{ TestMultiThreaded(castedPhase, 1); }) << " ms" << endl;
     //cout << "Transactional time: " << timeExecution([&]{ TestMultiThreaded(castedTransactional, 1); }) << " ms" << endl;
 
     return 0;

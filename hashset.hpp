@@ -133,7 +133,6 @@ private:
     std::vector<std::vector<T>> table1;
     std::vector<std::shared_ptr<std::mutex>> lock0;
     std::vector<std::shared_ptr<std::mutex>> lock1;
-    std::shared_mutex globalLock;
 
     // helper method
     bool removeFrom(std::vector<T> &set, T item) {
@@ -160,14 +159,10 @@ private:
     void resize() {
         size_t oldCapacity = table0.size();
 
-        std::cout << "resize" << std::endl;
-        std::unique_lock lk(globalLock);
-        std::cout << "lock got" << std::endl;
         for(auto &lock : lock0)
             lock->lock();
         for(auto &lock : lock1)
             lock->lock();
-        std::cout << "locks got" << std::endl;
 
         if(oldCapacity != table0.size()) {
             for(auto &lock : lock1)
@@ -183,6 +178,18 @@ private:
         table0 = std::vector<std::vector<T>>(capacity);
         table1 = std::vector<std::vector<T>>(capacity);
 
+        for(size_t i=0; i<oldCapacity; i++) {
+            lock0.push_back(std::make_shared<std::mutex>());
+            lock1.push_back(std::make_shared<std::mutex>());
+        }
+
+        //unlock all mutexes
+        for(auto &lock : lock1)
+            lock->unlock();
+        for(auto &lock : lock0)
+            lock->unlock();
+
+        // add all values that used to be in the table
         for(auto &row : oldTable0) {
             for(auto &z : row) {
                 add(z);
@@ -193,16 +200,6 @@ private:
                 add(z);
             }
         }
-
-        for(size_t i=0; i<oldCapacity; i++) {
-            lock0.push_back(std::make_shared<std::mutex>());
-            lock1.push_back(std::make_shared<std::mutex>());
-        }
-
-        for(auto &lock : lock1)
-            lock->unlock();
-        for(auto &lock : lock0)
-            lock->unlock();
     }
 
     bool relocate(int i, size_t hi) {
@@ -217,10 +214,9 @@ private:
                 case 0: hj = this->hash1(y, table1.size()); break;
                 case 1: hj = this->hash0(y, table0.size()); break;
             }
-            std::shared_lock lk(globalLock);
             acquire(y);
             std::vector<T>* jSet = &(j==0?table0:table1)[hj];
-            if(removeFrom(*jSet, y)) {
+            if(removeFrom(*iSet, y)) {
                 if(jSet->size() < THRESHOLD) {
                     jSet->push_back(y);
                     release(y);
@@ -230,6 +226,7 @@ private:
                     i = 1-i;
                     hi = hj;
                     j = 1-j;
+                    release(y);
                 } else {
                     iSet->push_back(y);
                     release(y);
@@ -242,8 +239,6 @@ private:
                 release(y);
                 return true;
             }
-
-            release(y);
         }
 
         return false;
@@ -260,7 +255,6 @@ public:
 
     bool add(T item) {
         if(contains(item)) return false;
-        std::shared_lock lk(globalLock);
         acquire(item);
 
         size_t h0 = this->hash0(item, table0.size());
@@ -301,7 +295,6 @@ public:
     }
 
     bool remove(T item) {
-        std::shared_lock lk(globalLock);
         acquire(item);
 
         size_t h0 = this->hash0(item, table0.size());
