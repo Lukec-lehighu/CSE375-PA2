@@ -2,6 +2,7 @@
 #include <functional>
 #include <chrono>
 #include <thread>
+#include <random>
 
 #include "hashset.hpp"
 
@@ -20,21 +21,34 @@ int64_t timeExecution(function<void()> func) {
     return chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
 }
 
+// a thread safe rng
+int safeRand() {
+    static thread_local mt19937 generator;
+    std::uniform_int_distribution<int> distribution(0,100000);
+    return distribution(generator);
+}
+
 void TestMultiThreaded(HashSet<int>* set, int numThreads) {
+    // for thread safe random generatino
     vector<thread> jobs;
-    for(int i=0; i<numThreads; i++) {
+    for(int t=0; t<numThreads; t++) {
         jobs.push_back(
             move(thread([&] {
                 for(size_t i=0; i<NUM_OPS/numThreads; i++) {
-                    int op = rand() % 100;
+                    int op = safeRand() % 100;
                     if(op < CONTAINS_PERCENT) {
-                        auto tmp = rand();
+                        auto tmp = safeRand();
+                        cout << "contains" << endl;
                         set->contains(tmp);
                     }
-                    else if(op < CONTAINS_PERCENT + INSERT_PERCENT)
-                        set->add(rand());
-                    else if(op < CONTAINS_PERCENT + INSERT_PERCENT + REMOVE_PERCENT)
-                        set->remove(rand());
+                    else if(op < CONTAINS_PERCENT + INSERT_PERCENT) {
+                        //cout << "insert" << endl;
+                        set->add(safeRand());
+                    }
+                    else if(op < CONTAINS_PERCENT + INSERT_PERCENT + REMOVE_PERCENT) {
+                        cout << "remove" << endl;
+                        set->remove(safeRand());
+                    }
                 }
             }))
         );
@@ -69,9 +83,9 @@ int main() {
     HashSet<int>* castedPhase = static_cast<HashSet<int>*>(&phasedHashSet);
     HashSet<int>* castedTransactional = static_cast<HashSet<int>*>(&transactionalHashSet);
 
-    cout << "Sequential time: " << timeExecution([&]{ TestSequential(seqHashSet); }) << " ms" << endl;
-    cout << "Phased Cuckoo time: " << timeExecution([&]{ TestMultiThreaded(castedPhase, 8); }) << " ms" << endl;
-    cout << "Transactional time: " << timeExecution([&]{ TestMultiThreaded(castedTransactional, 8); }) << " ms" << endl;
+    //cout << "Sequential time: " << timeExecution([&]{ TestSequential(seqHashSet); }) << " ms" << endl;
+    cout << "Phased Cuckoo time: " << timeExecution([&]{ TestMultiThreaded(castedPhase, 1); }) << " ms" << endl;
+    //cout << "Transactional time: " << timeExecution([&]{ TestMultiThreaded(castedTransactional, 1); }) << " ms" << endl;
 
     return 0;
 }

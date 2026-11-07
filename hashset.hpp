@@ -4,6 +4,7 @@
 #include <vector>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <algorithm>
 
 #include <iostream>
@@ -130,8 +131,9 @@ class PhasedCuckooHashSet : public HashSet<T> {
 private:
     std::vector<std::vector<T>> table0;
     std::vector<std::vector<T>> table1;
-    std::vector<std::mutex> lock0;
-    std::vector<std::mutex> lock1;
+    std::vector<std::shared_ptr<std::mutex>> lock0;
+    std::vector<std::shared_ptr<std::mutex>> lock1;
+    std::shared_mutex globalLock;
 
     // helper method
     bool removeFrom(std::vector<T> &set, T item) {
@@ -147,20 +149,32 @@ private:
     }
 
     void acquire(T &x) {
-        lock0[this->hash0(x, lock0.size())].lock();
-        lock1[this->hash1(x, lock1.size())].lock();
+        lock0[this->hash0(x, lock0.size())]->lock();
+        lock1[this->hash1(x, lock1.size())]->lock();
     }
     void release(T &x) {
-        lock0[this->hash0(x, lock0.size())].unlock();
-        lock1[this->hash1(x, lock1.size())].unlock();
+        lock0[this->hash0(x, lock0.size())]->unlock();
+        lock1[this->hash1(x, lock1.size())]->unlock();
     }
 
     void resize() {
         size_t oldCapacity = table0.size();
-        for(auto &lock : lock0)
-            lock.lock();
 
-        if(oldCapacity != table0.size()) return;
+        std::cout << "resize" << std::endl;
+        std::unique_lock lk(globalLock);
+        std::cout << "lock got" << std::endl;
+        for(auto &lock : lock0)
+            lock->lock();
+        for(auto &lock : lock1)
+            lock->lock();
+        std::cout << "locks got" << std::endl;
+
+        if(oldCapacity != table0.size()) {
+            for(auto &lock : lock1)
+                lock->unlock();
+            for(auto &lock : lock0)
+                lock->unlock();
+        }
 
         auto oldTable0 = table0;
         auto oldTable1 = table1;
@@ -180,8 +194,15 @@ private:
             }
         }
 
+        for(size_t i=0; i<oldCapacity; i++) {
+            lock0.push_back(std::make_shared<std::mutex>());
+            lock1.push_back(std::make_shared<std::mutex>());
+        }
+
+        for(auto &lock : lock1)
+            lock->unlock();
         for(auto &lock : lock0)
-            lock.unlock();
+            lock->unlock();
     }
 
     bool relocate(int i, size_t hi) {
@@ -196,6 +217,7 @@ private:
                 case 0: hj = this->hash1(y, table1.size()); break;
                 case 1: hj = this->hash0(y, table0.size()); break;
             }
+            std::shared_lock lk(globalLock);
             acquire(y);
             std::vector<T>* jSet = &(j==0?table0:table1)[hj];
             if(removeFrom(*jSet, y)) {
@@ -227,16 +249,19 @@ private:
         return false;
     }
 public:
-    PhasedCuckooHashSet() : lock0(std::vector<std::mutex>(K)), lock1(std::vector<std::mutex>(K)) {
+    PhasedCuckooHashSet() {
         for(size_t i=0; i<K; i++) {
             table0.push_back(std::vector<T>());
             table1.push_back(std::vector<T>());
+            lock0.push_back(std::make_shared<std::mutex>());
+            lock1.push_back(std::make_shared<std::mutex>());
         }
     }
 
     bool add(T item) {
-        acquire(item);
         if(contains(item)) return false;
+        std::shared_lock lk(globalLock);
+        acquire(item);
 
         size_t h0 = this->hash0(item, table0.size());
         size_t h1 = this->hash1(item, table1.size());
@@ -276,6 +301,7 @@ public:
     }
 
     bool remove(T item) {
+        std::shared_lock lk(globalLock);
         acquire(item);
 
         size_t h0 = this->hash0(item, table0.size());
