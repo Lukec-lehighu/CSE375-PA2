@@ -364,7 +364,7 @@ private:
         std::vector<std::shared_ptr<T>> garbage1(oldSize, nullptr);
         
         __transaction_atomic {
-            if(table0.size() != oldSize) return; // another thread already resized, ignore and move on
+            if(capacity != oldSize) return; // another thread already resized, ignore and move on
 
             for(size_t i=0; i<oldSize; i++) {
                 // reset tables for rehashing
