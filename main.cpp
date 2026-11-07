@@ -84,7 +84,7 @@ int main() {
     HashSet<int>* castedTransactional = static_cast<HashSet<int>*>(&transactionalHashSet);
 
     // cout << "Sequential time: " << timeExecution([&]{ TestSequential(seqHashSet); }) << " ms" << endl;
-    cout << "Phased Cuckoo time: " << timeExecution([&]{ TestMultiThreaded(castedPhase, 1); }) << " ms" << endl;
+    cout << "Phased Cuckoo time: " << timeExecution([&]{ TestMultiThreaded(castedPhase, 8); }) << " ms" << endl;
     // cout << "Transactional time: " << timeExecution([&]{ TestMultiThreaded(castedTransactional, 8); }) << " ms" << endl;
 
     return 0;

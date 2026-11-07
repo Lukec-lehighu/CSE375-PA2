@@ -4,6 +4,7 @@
 #include <vector>
 #include <memory>
 #include <mutex>
+#include <atomic>
 #include <shared_mutex>
 #include <algorithm>
 
@@ -131,8 +132,10 @@ class PhasedCuckooHashSet : public HashSet<T> {
 private:
     std::vector<std::vector<T>> table0;
     std::vector<std::vector<T>> table1;
-    std::vector<std::shared_ptr<std::mutex>> lock0;
-    std::vector<std::shared_ptr<std::mutex>> lock1;
+    std::vector<std::mutex> lock0;
+    std::vector<std::mutex> lock1;
+    std::vector<std::thread::id> owners0;
+    std::vector<std::thread::id> owners1;
 
     // helper method
     bool removeFrom(std::vector<T> &set, T item) {
@@ -148,27 +151,34 @@ private:
     }
 
     void acquire(T &x) {
-        lock0[this->hash0(x, lock0.size())]->lock();
-        lock1[this->hash1(x, lock1.size())]->lock();
+        if(owners0[this->hash0(x, lock0.size())] == std::this_thread::get_id())
+            return; //we already own this, avoid deadlock
+        
+        lock0[this->hash0(x, lock0.size())].lock();
+        owners0[this->hash0(x, lock0.size())] = std::this_thread::get_id();
+
+        if(owners1[this->hash1(x, lock1.size())] == std::this_thread::get_id())
+            return; //we already own this, avoid deadlock
+        
+        lock1[this->hash1(x, lock1.size())].lock();
+        owners1[this->hash1(x, lock1.size())] = std::this_thread::get_id();
     }
     void release(T &x) {
-        lock0[this->hash0(x, lock0.size())]->unlock();
-        lock1[this->hash1(x, lock1.size())]->unlock();
+        owners0[this->hash0(x, lock0.size())] = (std::thread::id)0;
+        lock0[this->hash0(x, lock0.size())].unlock();
+        owners1[this->hash1(x, lock1.size())] = (std::thread::id)0;
+        lock1[this->hash1(x, lock1.size())].unlock();
     }
 
     void resize() {
         size_t oldCapacity = table0.size();
 
         for(auto &lock : lock0)
-            lock->lock();
-        for(auto &lock : lock1)
-            lock->lock();
+            lock.lock();
 
         if(oldCapacity != table0.size()) {
-            for(auto &lock : lock1)
-                lock->unlock();
             for(auto &lock : lock0)
-                lock->unlock();
+                lock.unlock();
         }
 
         auto oldTable0 = table0;
@@ -178,16 +188,9 @@ private:
         table0 = std::vector<std::vector<T>>(capacity);
         table1 = std::vector<std::vector<T>>(capacity);
 
-        for(size_t i=0; i<oldCapacity; i++) {
-            lock0.push_back(std::make_shared<std::mutex>());
-            lock1.push_back(std::make_shared<std::mutex>());
-        }
-
         //unlock all mutexes
-        for(auto &lock : lock1)
-            lock->unlock();
         for(auto &lock : lock0)
-            lock->unlock();
+            lock.unlock();
 
         // add all values that used to be in the table
         for(auto &row : oldTable0) {
@@ -244,12 +247,12 @@ private:
         return false;
     }
 public:
-    PhasedCuckooHashSet() {
+    PhasedCuckooHashSet() : lock0(std::vector<std::mutex>(K)), lock1(std::vector<std::mutex>(K)) {
         for(size_t i=0; i<K; i++) {
             table0.push_back(std::vector<T>());
             table1.push_back(std::vector<T>());
-            lock0.push_back(std::make_shared<std::mutex>());
-            lock1.push_back(std::make_shared<std::mutex>());
+            owners0.push_back((std::thread::id)0);
+            owners1.push_back((std::thread::id)0);
         }
     }
 
@@ -316,14 +319,14 @@ public:
     bool contains(T &item) {
         acquire(item);
 
-        auto set0 = table0[this->hash0(item, table0.size())];
-        if(std::find(set0.begin(), set0.end(), item) != set0.end()) {
+        auto set0 = &table0[this->hash0(item, table0.size())];
+        if(std::find(set0->begin(), set0->end(), item) != set0->end()) {
             release(item);
             return true;
         }
 
-        auto set1 = table1[this->hash1(item, table1.size())];
-        if(std::find(set1.begin(), set1.end(), item) != set1.end()) {
+        auto set1 = &table1[this->hash1(item, table1.size())];
+        if(std::find(set1->begin(), set1->end(), item) != set1->end()) {
             release(item);
             return true;
         }
